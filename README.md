@@ -1,66 +1,46 @@
-## Foundry
+## About
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Initially this project is a DAO on top of my [Uniswap V2 project](https://github.com/mskhno/uniswap-v2-project). This may change in future commits.
+A proposal will be a ```createPair``` suggestion. Users will vote on it and then a new pair will be create via ```UniswapV2Factory```, or not.
 
-Foundry consists of:
+This is a simple DAO with voting mechanism being a governance token. Owners need to delegate voting power to themselves or other to vote - ERC5805.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+All DAO's delays and periods will be based on **block.number** and this clock will be standardized as ERC6372.
 
-## Documentation
+The proposal lifecycle will consist of following stages:
+   1. After the creation of proposal there is a **voting delay**. It is implemented for users to get ready for voting: increase voting power, unstake tokens etc.
+   2. The moment this voting delay has passes, there is a **voting period**.
+   3. After voting is finished, the proposal is **queued**. This is done so that user who voted against it can exit the protocol and as an additional safety.
+   4. **Execution**. Proposal can be finally executed by users.
+   5. // Expired
+   6. If proposal is found to be malicious, guardian address can **cancel** the proposal.
+   
+## Structure
 
-https://book.getfoundry.sh/
+1. ```GovernanceToken```
+This is the way the DAO will determine voting powers of users. This will be an ```ERC20``` token with inherited ```ERC20Permit``` extension, and coded ```ERC20Votes```.
 
-## Usage
+Contract will be a standard ERC20 token as an asset, but addition of ERC20Votes will enable tracking voting power via checkpoints.
+Tokens map 1:1 to voting power and need to be delegated to be usable in voting.
 
-### Build
+Checkpoints are going to be created for every delegation, mint, burn and transfer operation. They are created for each delegate's voting power and for the total supply. The way to do it is to override ERC20's _update function. It should first update balances(super._update) and then move voting power. The _transferVotingPower function will do this and also create checkpoints accordingly.
 
-```shell
-$ forge build
-```
+Checkpoint are stored in arrays of Checkpoint struct, which contains two value: block.number of checkpoint and it's voting power value.
 
-### Test
+Those arrays are updated by pushing new checkpoints.
 
-```shell
-$ forge test
-```
+2. ```Governor```
+Logic of creating proposals, different voting functions and execution is going to be handled.
 
-### Format
+```Governor``` will read from ```GovernanceToken``` to determine voting powers of voters at the time of **voting period**. 
 
-```shell
-$ forge fmt
-```
+3. ```Timelock```
+Emposes a delay on each successful proposal. 
 
-### Gas Snapshots
+## TODO
 
-```shell
-$ forge snapshot
-```
+Read ERC20Votes code
 
-### Anvil
+How Timelock works?
+Read blog on DAO or Timelock type code
 
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
