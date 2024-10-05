@@ -77,7 +77,7 @@ contract GovernanceTokenTest is Test {
         console.log("votes", delegateVotes);
 
         console.log("USER PAST VOTES at block", block.number);
-        uint256 userPastVotes = token.getPastVotes(user, block.number);
+        uint256 userPastVotes = token.getPastVotes(user, block.number - 1);
         console.log("pastVotes", userPastVotes);
     }
 
