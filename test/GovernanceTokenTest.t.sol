@@ -2,17 +2,17 @@
 pragma solidity 0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {GovernanceToken} from "src/GovernanceToken.sol";
+import {GovernanceTokenMint} from "./GovernanceTokenMint.sol";
 
 contract GovernanceTokenTest is Test {
-    GovernanceToken token;
+    GovernanceTokenMint token;
 
     uint256 mintAmount = 1000e18;
     address user = makeAddr("user");
     address delegate = makeAddr("delegate");
 
     function setUp() public {
-        token = new GovernanceToken(user, mintAmount);
+        token = new GovernanceTokenMint(user, mintAmount);
     }
 
     function testVotes() public {

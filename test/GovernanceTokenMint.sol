@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 
-contract GovernanceToken is ERC20, ERC20Permit, ERC20Votes {
+contract GovernanceTokenMint is ERC20, ERC20Permit, ERC20Votes {
     constructor(address to, uint256 tokenAmount) ERC20("GovernanceToken", "GT") ERC20Permit("GovernanceToken") {
         _mint(to, tokenAmount);
     }
