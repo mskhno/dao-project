@@ -1,62 +1,37 @@
-## About
+# Simple DAO with ERC20 Voting Mechanism
 
-This project is a DAO built on top of OpenZeppelin's ERC20Votes extension. For learning purposes, i decided to code the extension that allows historical tracking of voting units myself. 
+This project demonstrates a basic implementation of a Decentralized Autonomous Organization (DAO) using an ERC20 token for voting. `ERC20Votes` extension is used to track voting power.
 
-## DAO 
+## Features
 
-The protocol is going of three contracts: ```GovernanceToken.sol```, ```Governor.sol``` and ```Timelock.sol```.
+1. **ERC20 Token Voting**: Token holders can vote on proposals or delegate their voting power.
+2. **Proposal Creation**: A minimum of 1000 tokens is required to create a proposal.
+3.  **Voting Options**: Users can vote:
+      - **For**: In favor of the proposal.
+      - **Against**: Opposing the proposal.
+      - **Abstain**: Neither for nor against the proposal.
+4. **Proposal Passing Criteria**: 
+     - A proposal must have more **For** votes than **Against**.
+     - A quorum of 30% of the total token supply must be reached for the vote to be valid.
 
-System's voting mechanism is based on ERC20 tokens. The treshold for proposal creation is set at 1000 tokens. For proposal to pass, it needs to have more FOR votes than AGAINST and reach a 30% quorum. 
+## Protocol Structure
 
-DAO's periods and delays(the clock) are based on **block.number**. The average block time is considered to be 12 seconds.
-*Note: the clock may be changed to block.timestamp. This is going to be reflected as in ERC5808*
+1. **`GovernanceToken.sol`**: Defines the ERC20 token used for governance, managing transfers, minting, and voting power via `ERC20Votes`.
+  
+2. **`Governor.sol`**: Handles the core governance logic, including:
+     - Proposal creation
+     - Voting
+     - Proposal execution after the timelock period
 
-Proposal lifecycle consists of the following stages:
-   1. After it's created, the **voting delay** has to pass for the actual voting to start. It is set at 2 days.
-   2. Delay ends, and the **voting period starts**. It lasts for 3 days.
-   3. If the proposal does not pass, it is considered **canceled**. If it does, **timelock** period starts, whish is another 2 days.
-   4. After timelock period is finished, the proposal is **executed**.
+3. **`Timelock.sol`**: Enforces a delay period after a proposal passes before it can be executed, ensuring time for review or challenge.
 
-At any point of proposal before it is executed, **guardian** address can cancel it.
+## Proposal Lifecycle
 
-Proposal stages are mapped to the following states:
-   1. Review
-   2. Active
-   3. Queued
-   4. Executed
-   5. Canceled
-   
-## Contracts
+1. **Voting Delay**: A 2-day delay after proposal creation before voting begins.
+2. **Voting Period**: A 3-day period where users can vote.
+3. **Outcome**:
+   - If the proposal fails, it is considered **canceled**.
+   - If passed, a 2-day **timelock** period follows before the proposal can be executed.
+4. **Execution**: After the timelock, the proposal is executed.
 
-### ```GovernanceToken.sol```
-This contract is the way DAO handles voting. Holders of this ERC20 token can participate in governance of this protocol. Contract inherits from OpenZeppelin's ERC20 and is ERC5808 standardized. 
-
-Tokens map 1:1 to voting units. The contract has checkpointing functionality to track historical voting powers and solve double spending problem. 
-
-Overall, ```GovernanceToken.sol``` determines who can create proposals and participate in voting and determines their voting power.
-
-#### Checkpointing mechanism
-To solve double voting problem and figure out the voting powers of users at a certain point in time, checkpointing mechanish is implemented. It uses ERC5805 as framework to derive voting units from tokens without transfering them, and then updates the historical data of an account to track its own voting power.
-
-To express voting power, users need to **delegate**. Power can be delegated to themselves, to a trusted party, or to zero address. This mechanism also allows to save gas for the whole community of DAO. 
-
-Checkpointing mechanism tracks the total supply and addresses voting powers with the help of ```totalSupplyCheckpoints``` and ```delegatePowerCheckpoints``` mappings. Since every user can be a delegatee and voting is done with voting units and not tokens directly, it is possible to track only each delegatee's voting power and not each user's token balance. Voting power is again defined as all voting units delegated to an address at some block number.
-
-Therefore, token operations create checkpoints only for delegatee's of involved parties.
-
-### ```Governor.sol```
-
-This contract is the way for this DAO to handle voting, proposals and their execution. 
-
-```Governor.sol``` reads from ```GovernanceToken.sol``` and assigns voting units to one of **3 options** during voting stage:
-   1. FOR
-   2. AGAINST
-   3. ABSTAIN
-   
-A passed proposal is the one that has:
-   1. More FOR than AGAINST votes
-   2. Reached the 30% quorum quota.
-   
-### ```Timelock.sol```
-
-*This will be described later when i get the idea of the role and the steps involved into "timelocking" a proposal.*
+At any point before execution, a **guardian** address can cancel the proposal.
