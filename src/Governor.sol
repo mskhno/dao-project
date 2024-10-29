@@ -7,6 +7,7 @@ contract Governor {
     error Governor__ArrayLengthsMismatch();
     error Governor__ProposerHasLiveProposal();
     error Governor__ProposalIdCollision();
+    error Governor__InvalidProposalId();
 
     //token
     IGovernanceToken public token;
@@ -69,11 +70,20 @@ contract Governor {
         Executed
     }
 
+    event ProposalCreated(
+        uint256 id,
+        address proposer,
+        address[] targets,
+        uint256[] values,
+        string[] signatures,
+        bytes[] calldatas,
+        uint256 startBlock,
+        uint256 endBlock
+    );
+
     constructor(address govToken) {
         token = IGovernanceToken(govToken);
     }
-
-    function state(uint256 proposalId) public view returns (ProposalState) {}
 
     function propose(
         address[] memory targets,
@@ -135,6 +145,36 @@ contract Governor {
         newProposal.executed = false;
 
         latestProposalIds[msg.sender] = proposalId;
+
+        emit ProposalCreated(proposalId, msg.sender, targets, values, signatures, calldatas, startBlock, endBlock);
+    }
+
+    function getActions(uint256 proposalId)
+        public
+        view
+        returns (address[] memory, uint256[] memory, string[] memory, bytes[] memory)
+    {
+        if (proposalId == 0 || proposalId > proposalCount) {
+            revert Governor__InvalidProposalId();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        return (proposal.targets, proposal.values, proposal.signatures, proposal.calldatas);
+    }
+
+    function state(uint256 proposalId) public view returns (ProposalState proposalState) {
+        // check proposal id to be >0 and <= proposalCount
+        if (proposalId == 0 || proposalId > proposalCount) {
+            revert Governor__InvalidProposalId();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+
+        if (proposal.startBlock > block.number) {
+            return ProposalState.Pending;
+        } else if (proposal.endBlock > block.number) {
+            return ProposalState.Active;
+        }
     }
 
     function proposalThreshold() public pure returns (uint256) {
