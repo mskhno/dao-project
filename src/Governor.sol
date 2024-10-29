@@ -45,7 +45,7 @@ contract Governor {
         /// @notice Flag marking whether the proposal has been executed
         bool executed;
         /// @notice Receipts of ballots for the entire set of voters
-        mapping(address => Receipt) receipts;
+        mapping(address voter => Receipt) receipts;
     }
 
     /// @notice Ballot receipt record for a voter
@@ -89,7 +89,7 @@ contract Governor {
         }
 
         // check if there are actions !=0 <-10
-        if (targets.length != 0 && targets.length <= proposalMaxOperations()) {
+        if (targets.length == 0 || targets.length > proposalMaxOperations()) {
             revert Governor__InvalidAmountOfTargets();
         }
         // check if lengtsh mismatch
