@@ -6,11 +6,18 @@ import {Test, console} from "forge-std/Test.sol";
 import {Governor} from "src/Governor.sol";
 import {GovernanceTokenMint} from "test/mocks/GovernanceTokenMint.sol";
 
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+
 contract GovernorTest is Test {
     Governor public governor;
     GovernanceTokenMint public token;
 
-    address public proposer = makeAddr("proposer");
+    address public proposer;
+    uint256 public proposerKey;
+
+    bytes32 public GOVERNOR_DOMAIN_SEPARATOR;
+
+    string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)";
 
     event ProposalCreated(
         uint256 id,
@@ -23,9 +30,29 @@ contract GovernorTest is Test {
         uint256 endBlock
     );
 
+    event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
+
     function setUp() public {
         token = new GovernanceTokenMint(address(this));
-        governor = new Governor(address(token));
+
+        string memory governorName = "Governor";
+        string memory governorVersion = "1";
+
+        governor = new Governor(address(token), governorName, governorVersion);
+
+        bytes32 GOVERNOR_DOMAIN_TYPE_HASH =
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+        GOVERNOR_DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                GOVERNOR_DOMAIN_TYPE_HASH,
+                keccak256(bytes(governorName)),
+                keccak256(bytes(governorVersion)),
+                block.chainid,
+                address(governor)
+            )
+        );
+
+        (proposer, proposerKey) = makeAddrAndKey("proposer");
     }
 
     modifier proposerCanPropose() {
@@ -36,7 +63,7 @@ contract GovernorTest is Test {
         _;
     }
 
-    modifier proposalCreatedDelegate() {
+    modifier proposalCreated() {
         token.mint(proposer, governor.proposalThreshold());
         vm.prank(proposer);
         token.delegate(proposer);
@@ -252,7 +279,7 @@ contract GovernorTest is Test {
     /// getActions()
     /////////////
 
-    function test_getActions_revertsWhenProposalIdIsInvalid() public proposalCreatedDelegate {
+    function test_getActions_revertsWhenProposalIdIsInvalid() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
         vm.expectRevert(Governor.Governor__InvalidProposalId.selector);
@@ -293,7 +320,7 @@ contract GovernorTest is Test {
     /// state()
     /////////////
 
-    function test_state_revertsWhenProposalIdIsInvalid() public proposalCreatedDelegate {
+    function test_state_revertsWhenProposalIdIsInvalid() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
         vm.expectRevert(Governor.Governor__InvalidProposalId.selector);
@@ -303,7 +330,7 @@ contract GovernorTest is Test {
         governor.state(2);
     }
 
-    function test_state_returnsPending() public proposalCreatedDelegate {
+    function test_state_returnsPending() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
         Governor.ProposalState actualState = governor.state(1);
@@ -311,7 +338,7 @@ contract GovernorTest is Test {
         assertEq(uint256(actualState), uint256(Governor.ProposalState.Pending));
     }
 
-    function test_state_returnsActive() public proposalCreatedDelegate {
+    function test_state_returnsActive() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
         vm.roll(block.number + 1);
@@ -319,5 +346,106 @@ contract GovernorTest is Test {
         Governor.ProposalState actualState = governor.state(1);
 
         assertEq(uint256(actualState), uint256(Governor.ProposalState.Active));
+    }
+
+    /////////////
+    /// castVote()
+    /////////////
+
+    function test_castVote_revertsWhenProposalIsNotActive() public proposalCreated {
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__ProposalIsNotActive.selector);
+        governor.castVote(1, true);
+    }
+
+    function test_castVote_UserCanVote() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        (,,,,, uint256 initialForVotes,,,) = governor.proposals(1);
+
+        assertEq(initialForVotes, 0);
+
+        Governor.Receipt memory blankReceipt = governor.getReceipt(1, proposer);
+
+        assertEq(blankReceipt.hasVoted, false);
+        assertEq(blankReceipt.support, false);
+        assertEq(blankReceipt.votes, 0);
+
+        uint256 expectedForVotes = token.getPastVotes(proposer, block.number - 1);
+
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        (,,,,, uint256 actualForVotes,,,) = governor.proposals(1);
+
+        Governor.Receipt memory receipt = governor.getReceipt(1, proposer);
+
+        assertEq(actualForVotes, expectedForVotes);
+        assertEq(actualForVotes, expectedForVotes - initialForVotes);
+
+        assertEq(receipt.hasVoted, true);
+        assertEq(receipt.support, true);
+        assertEq(receipt.votes, expectedForVotes);
+    }
+
+    function test_castVote_revertsWhenUserHasVoted() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__AddressAlreadyVoted.selector);
+        governor.castVote(1, true);
+    }
+
+    function test_castVote_emitsEvent() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        console.log("proposer balance:", token.balanceOf(proposer));
+        console.log("proposer votes:", token.getPastVotes(proposer, block.number - 1));
+
+        vm.prank(proposer);
+        vm.expectEmit(false, false, false, true);
+        emit VoteCasted(proposer, 1, true, 1000);
+        governor.castVote(1, true);
+    }
+
+    /////////////
+    /// castVote()
+    /////////////
+
+    function test_castVoteBySig_castsVote() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, 1, true));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(GOVERNOR_DOMAIN_SEPARATOR, structHash);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(proposerKey, digest);
+
+        (,,,,, uint256 initialForVotes,,,) = governor.proposals(1);
+
+        assertEq(initialForVotes, 0);
+
+        Governor.Receipt memory blankReceipt = governor.getReceipt(1, proposer);
+
+        assertEq(blankReceipt.hasVoted, false);
+        assertEq(blankReceipt.support, false);
+        assertEq(blankReceipt.votes, 0);
+
+        uint256 expectedForVotes = token.getPastVotes(proposer, block.number - 1);
+
+        governor.castVoteBySig(1, true, v, r, s);
+
+        (,,,,, uint256 actualForVotes,,,) = governor.proposals(1);
+
+        Governor.Receipt memory receipt = governor.getReceipt(1, proposer);
+
+        assertEq(actualForVotes, expectedForVotes);
+        assertEq(actualForVotes, expectedForVotes - initialForVotes);
+
+        assertEq(receipt.hasVoted, true);
+        assertEq(receipt.support, true);
+        assertEq(receipt.votes, expectedForVotes);
     }
 }
