@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-contract Governor {
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+
+contract Governor is EIP712 {
     error Governor__ProposalThresholdNotMet();
     error Governor__InvalidAmountOfTargets();
     error Governor__ArrayLengthsMismatch();
     error Governor__ProposerHasLiveProposal();
     error Governor__ProposalIdCollision();
     error Governor__InvalidProposalId();
+    error Governor__ProposalIsNotActive();
+    error Governor__AddressAlreadyVoted();
 
     //token
     IGovernanceToken public token;
+
+    string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)";
 
     uint256 public proposalCount; // total number of proposals, incremented before proposal is created. 0 id is used to check for collisions
 
@@ -56,7 +63,7 @@ contract Governor {
         /// @notice Whether or not the voter supports the proposal
         bool support;
         /// @notice The number of votes the voter had, which were cast
-        uint96 votes;
+        uint256 votes;
     }
 
     enum ProposalState {
@@ -81,8 +88,10 @@ contract Governor {
         uint256 endBlock
     );
 
-    constructor(address govToken) {
-        token = IGovernanceToken(govToken);
+    event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
+
+    constructor(address governanceToken, string memory name, string memory version) EIP712(name, version) {
+        token = IGovernanceToken(governanceToken);
     }
 
     function propose(
@@ -149,19 +158,6 @@ contract Governor {
         emit ProposalCreated(proposalId, msg.sender, targets, values, signatures, calldatas, startBlock, endBlock);
     }
 
-    function getActions(uint256 proposalId)
-        public
-        view
-        returns (address[] memory, uint256[] memory, string[] memory, bytes[] memory)
-    {
-        if (proposalId == 0 || proposalId > proposalCount) {
-            revert Governor__InvalidProposalId();
-        }
-
-        Proposal storage proposal = proposals[proposalId];
-        return (proposal.targets, proposal.values, proposal.signatures, proposal.calldatas);
-    }
-
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
         // check proposal id to be >0 and <= proposalCount
         if (proposalId == 0 || proposalId > proposalCount) {
@@ -175,6 +171,68 @@ contract Governor {
         } else if (proposal.endBlock > block.number) {
             return ProposalState.Active;
         }
+    }
+
+    // voting
+    function castVote(uint256 proposalId, bool support) public {
+        _castVote(msg.sender, proposalId, support);
+    }
+
+    function castVoteBySig(uint256 proposalId, bool support, uint8 v, bytes32 r, bytes32 s) public {
+        // any checks at all? can it cast a random persons vote in case of random signature spam? sounds like i am not really understading something, missing out
+        // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется, в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены, чтобы его голос засчитался? трудно наверно но мозг мой вот так подумал
+        bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, proposalId, support));
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        address signer = ECDSA.recover(digest, v, r, s);
+
+        _castVote(signer, proposalId, support);
+    }
+
+    function _castVote(address voter, uint256 proposalId, bool support) internal {
+        // check if its active proposal
+        if (state(proposalId) != ProposalState.Active) {
+            revert Governor__ProposalIsNotActive();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        Receipt storage receipt = proposal.receipts[voter];
+
+        // check if they voted
+        if (receipt.hasVoted) {
+            revert Governor__AddressAlreadyVoted();
+        }
+
+        uint256 votes = token.getPastVotes(voter, proposal.startBlock - 1); // voting starts AT startBlock, votes should be delegated before
+
+        if (support) {
+            proposal.forVotes += votes;
+        } else {
+            proposal.againstVotes += votes;
+        }
+
+        receipt.hasVoted = true;
+        receipt.support = support;
+        receipt.votes = votes;
+
+        emit VoteCasted(voter, proposalId, support, votes);
+    }
+
+    function getActions(uint256 proposalId)
+        public
+        view
+        returns (address[] memory, uint256[] memory, string[] memory, bytes[] memory)
+    {
+        if (proposalId == 0 || proposalId > proposalCount) {
+            revert Governor__InvalidProposalId();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        return (proposal.targets, proposal.values, proposal.signatures, proposal.calldatas);
+    }
+
+    function getReceipt(uint256 proposalId, address voter) public view returns (Receipt memory) {
+        return proposals[proposalId].receipts[voter];
     }
 
     function proposalThreshold() public pure returns (uint256) {
