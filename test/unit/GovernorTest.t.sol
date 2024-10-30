@@ -204,7 +204,49 @@ contract GovernorTest is Test {
         governor.propose(targets, values, signatures, calldatas);
     }
 
-    function test_propose_revertsWhenProposerHasLiveProposal() public {}
+    function test_propose_revertsWhenProposerHasLiveProposalPending() public proposerCanPropose {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        string[] memory signatures = new string[](1);
+        bytes[] memory calldatas = new bytes[](1);
+
+        targets[0] = address(token);
+        values[0] = 1000e18;
+        signatures[0] = "transfer(address,uint256)";
+        calldatas[0] = abi.encodeWithSignature(signatures[0], proposer, values[0]);
+
+        vm.prank(proposer);
+        governor.propose(targets, values, signatures, calldatas);
+
+        assertEq(uint256(Governor.ProposalState.Pending), uint256(governor.state(1)));
+
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__ProposerHasLiveProposal.selector);
+        governor.propose(targets, values, signatures, calldatas);
+    }
+
+    function test_propose_revertsWhenProposerHasLiveProposalActive() public proposerCanPropose {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        string[] memory signatures = new string[](1);
+        bytes[] memory calldatas = new bytes[](1);
+
+        targets[0] = address(token);
+        values[0] = 1000e18;
+        signatures[0] = "transfer(address,uint256)";
+        calldatas[0] = abi.encodeWithSignature(signatures[0], proposer, values[0]);
+
+        vm.prank(proposer);
+        governor.propose(targets, values, signatures, calldatas);
+
+        vm.roll(block.number + 1);
+
+        assertEq(uint256(Governor.ProposalState.Active), uint256(governor.state(1)));
+
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__ProposerHasLiveProposal.selector);
+        governor.propose(targets, values, signatures, calldatas);
+    }
 
     /////////////
     /// getActions()
