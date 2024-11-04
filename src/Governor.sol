@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
+import {IGovernanceToken} from "src/interfaces/IGovernanceToken.sol";
+import {ITimelock} from "src/interfaces/ITimelock.sol";
+
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
@@ -13,9 +16,17 @@ contract Governor is EIP712 {
     error Governor__InvalidProposalId();
     error Governor__ProposalIsNotActive();
     error Governor__AddressAlreadyVoted();
+    error Governor__ProposalStatusMustBeSucceeded();
+    error Governor__TransactionIsAlreadyQueued();
 
     //token
     IGovernanceToken public token;
+
+    //timelock
+    ITimelock public timelock;
+
+    string public constant GOVERNOR_NAME = "Governor";
+    string public constant GOVERNOR_VERSION = "1";
 
     string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)";
 
@@ -90,8 +101,11 @@ contract Governor is EIP712 {
 
     event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
 
-    constructor(address governanceToken, string memory name, string memory version) EIP712(name, version) {
-        token = IGovernanceToken(governanceToken);
+    event ProposalQueued(uint256 proposalId, uint256 eta);
+
+    constructor(address _token, address _timelock) EIP712(GOVERNOR_NAME, GOVERNOR_VERSION) {
+        token = IGovernanceToken(_token);
+        timelock = ITimelock(_timelock);
     }
 
     function propose(
@@ -158,6 +172,48 @@ contract Governor is EIP712 {
         emit ProposalCreated(proposalId, msg.sender, targets, values, signatures, calldatas, startBlock, endBlock);
     }
 
+    // queue
+
+    function queue(uint256 proposalId) public {
+        // check state
+        if (state(proposalId) != ProposalState.Succeeded) {
+            revert Governor__ProposalStatusMustBeSucceeded();
+        }
+
+        // queue
+        Proposal storage proposal = proposals[proposalId];
+        uint256 eta = block.timestamp + timelock.delay();
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            _queueTransaction(
+                proposal.id, proposal.targets[i], proposal.values[i], proposal.signatures[i], proposal.calldatas[i], eta
+            );
+        }
+        proposal.eta = eta;
+
+        // emit event
+        emit ProposalQueued(proposalId, eta);
+    }
+
+    // proposalId is debatable
+    function _queueTransaction(
+        uint256 proposalId,
+        address target,
+        uint256 value,
+        string memory signature,
+        bytes memory data,
+        uint256 eta
+    ) internal {
+        bytes32 txHash = keccak256(abi.encode(proposalId, target, value, signature, data, eta));
+
+        if (timelock.queuedTransactions(txHash)) {
+            // can it happen? maybe if someone queues the transaction manually but no option like this in the system
+            // could happen in Compound maybe because txHash is made from tx data and proposal.eta, proposal.id is not included. prob really unlikely
+            revert Governor__TransactionIsAlreadyQueued();
+        }
+
+        timelock.queueTransaction(proposalId, target, value, signature, data, eta);
+    }
+
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
         // check proposal id to be >0 and <= proposalCount
         if (proposalId == 0 || proposalId > proposalCount) {
@@ -166,11 +222,34 @@ contract Governor is EIP712 {
 
         Proposal storage proposal = proposals[proposalId];
 
-        if (proposal.startBlock > block.number) {
+        if (proposal.canceled) {
+            return ProposalState.Canceled;
+        } else if (proposal.startBlock > block.number) {
             return ProposalState.Pending;
         } else if (proposal.endBlock > block.number) {
             return ProposalState.Active;
+        } else if (proposal.forVotes <= proposal.againstVotes || !_checkProposalMeetsQuorum(proposalId)) {
+            return ProposalState.Defeated;
+        } else if (proposal.eta == 0) {
+            return ProposalState.Succeeded;
+        } else if (proposal.executed) {
+            return ProposalState.Executed;
+        } else if (block.timestamp >= proposal.eta + timelock.GRACE_PERIOD()) {
+            return ProposalState.Expired;
+        } else {
+            return ProposalState.Queued;
         }
+    }
+
+    function _checkProposalMeetsQuorum(uint256 proposalId) internal view returns (bool) {
+        Proposal storage proposal = proposals[proposalId];
+        uint256 quorumAmount = (token.getPastTotalSupply(proposal.startBlock - 1)) * quorumVotes() / 100; // precision loss?
+
+        if (proposal.forVotes + proposal.againstVotes >= quorumAmount) {
+            return true;
+        }
+
+        return false;
     }
 
     // voting
@@ -250,9 +329,8 @@ contract Governor is EIP712 {
     function votingPeriod() public pure returns (uint256) {
         return 21600; // 3 days in blocks (assuming 12s blocks)
     }
-}
 
-interface IGovernanceToken {
-    function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
+    function quorumVotes() public pure returns (uint256) {
+        return 30; // 30% of total supply
+    }
 }
-// 3 * 24 * 60 * 60 = 172800 / 12 = 14400
