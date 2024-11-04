@@ -272,7 +272,7 @@ contract GovernorTest is Test {
         vm.prank(proposer);
         governor.propose(targets, values, signatures, calldatas);
 
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         assertEq(uint256(Governor.ProposalState.Active), uint256(governor.state(1)));
 
@@ -347,7 +347,7 @@ contract GovernorTest is Test {
     function test_state_returnsActive() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         Governor.ProposalState actualState = governor.state(1);
 
@@ -365,7 +365,7 @@ contract GovernorTest is Test {
     }
 
     function test_castVote_UserCanVote() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         (,,,,, uint256 initialForVotes,,,) = governor.proposals(1);
 
@@ -395,7 +395,7 @@ contract GovernorTest is Test {
     }
 
     function test_castVote_revertsWhenUserHasVoted() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         vm.prank(proposer);
         governor.castVote(1, true);
@@ -406,7 +406,7 @@ contract GovernorTest is Test {
     }
 
     function test_castVote_emitsEvent() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         console.log("proposer balance:", token.balanceOf(proposer));
         console.log("proposer votes:", token.getPastVotes(proposer, block.number - 1));
@@ -418,11 +418,11 @@ contract GovernorTest is Test {
     }
 
     /////////////
-    /// castVote()
+    /// castVoteBySig()
     /////////////
 
     function test_castVoteBySig_castsVote() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, 1, true));
         bytes32 digest = MessageHashUtils.toTypedDataHash(GOVERNOR_DOMAIN_SEPARATOR, structHash);
@@ -460,7 +460,7 @@ contract GovernorTest is Test {
     /////////////
 
     function test_queue_revertsWhenProposalStateIsNotSucceeded() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         vm.prank(proposer);
         vm.expectRevert(Governor.Governor__ProposalStatusMustBeSucceeded.selector);
@@ -468,7 +468,7 @@ contract GovernorTest is Test {
     }
 
     function test_queue_queuesTransaction() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         address target = address(token);
         uint256 value = 0;
@@ -496,7 +496,7 @@ contract GovernorTest is Test {
     }
 
     function test_queue_emitsEvent() public proposalCreated {
-        vm.roll(block.number + 1);
+        vm.roll(block.number + governor.votingDelay());
 
         vm.prank(proposer);
         governor.castVote(1, true);
@@ -513,7 +513,7 @@ contract GovernorTest is Test {
 
     //// fails because state is updated to queued
     // function test_queue_revertsWhenTransactionIsAlreadyQueued() public proposalCreated {
-    //     vm.roll(block.number + 1);
+    //     vm.roll(block.number + governor.votingDelay());
 
     //     vm.prank(proposer);
     //     governor.castVote(1, true);

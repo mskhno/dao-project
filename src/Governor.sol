@@ -323,7 +323,7 @@ contract Governor is EIP712 {
     }
 
     function votingDelay() public pure returns (uint256) {
-        return 1;
+        return 14400; // 2 days in blocks (assuming 12s blocks)
     }
 
     function votingPeriod() public pure returns (uint256) {
