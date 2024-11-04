@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {Test, console} from "forge-std/Test.sol";
 
 import {Governor} from "src/Governor.sol";
+import {Timelock} from "src/Timelock.sol";
 import {GovernanceTokenMint} from "test/mocks/GovernanceTokenMint.sol";
 
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -11,6 +12,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 contract GovernorTest is Test {
     Governor public governor;
     GovernanceTokenMint public token;
+    Timelock public timelock;
 
     address public proposer;
     uint256 public proposerKey;
@@ -18,6 +20,8 @@ contract GovernorTest is Test {
     bytes32 public GOVERNOR_DOMAIN_SEPARATOR;
 
     string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)";
+
+    uint256 public constant TIMELOCK_DELAY = 2 days;
 
     event ProposalCreated(
         uint256 id,
@@ -29,24 +33,26 @@ contract GovernorTest is Test {
         uint256 startBlock,
         uint256 endBlock
     );
-
     event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
+    event ProposalQueued(uint256 proposalId, uint256 eta);
 
     function setUp() public {
         token = new GovernanceTokenMint(address(this));
 
-        string memory governorName = "Governor";
-        string memory governorVersion = "1";
+        timelock = new Timelock(TIMELOCK_DELAY);
 
-        governor = new Governor(address(token), governorName, governorVersion);
+        governor = new Governor(address(token), address(timelock));
+
+        timelock.transferOwnership(address(governor));
 
         bytes32 GOVERNOR_DOMAIN_TYPE_HASH =
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+
         GOVERNOR_DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 GOVERNOR_DOMAIN_TYPE_HASH,
-                keccak256(bytes(governorName)),
-                keccak256(bytes(governorVersion)),
+                keccak256(bytes(governor.GOVERNOR_NAME())),
+                keccak256(bytes(governor.GOVERNOR_VERSION())),
                 block.chainid,
                 address(governor)
             )
@@ -448,4 +454,79 @@ contract GovernorTest is Test {
         assertEq(receipt.support, true);
         assertEq(receipt.votes, expectedForVotes);
     }
+
+    /////////////
+    /// queue()
+    /////////////
+
+    function test_queue_revertsWhenProposalStateIsNotSucceeded() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__ProposalStatusMustBeSucceeded.selector);
+        governor.queue(1);
+    }
+
+    function test_queue_queuesTransaction() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        address target = address(token);
+        uint256 value = 0;
+        string memory signature = "delegate(address)";
+        bytes memory callData = abi.encodeWithSignature(signature, proposer, value);
+
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        uint256 eta = block.timestamp + timelock.delay();
+        bytes32 txHash = keccak256(abi.encode(1, target, value, signature, callData, eta));
+
+        assertEq(timelock.queuedTransactions(txHash), false);
+
+        vm.prank(proposer);
+        governor.queue(1);
+
+        (,, uint256 proposalEta,,,,,,) = governor.proposals(1);
+
+        assertEq(timelock.queuedTransactions(txHash), true);
+        assertEq(proposalEta, eta);
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
+    }
+
+    function test_queue_emitsEvent() public proposalCreated {
+        vm.roll(block.number + 1);
+
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        uint256 eta = block.timestamp + timelock.delay();
+
+        vm.prank(proposer);
+        vm.expectEmit(false, false, false, true);
+        emit ProposalQueued(1, eta);
+        governor.queue(1);
+    }
+
+    //// fails because state is updated to queued
+    // function test_queue_revertsWhenTransactionIsAlreadyQueued() public proposalCreated {
+    //     vm.roll(block.number + 1);
+
+    //     vm.prank(proposer);
+    //     governor.castVote(1, true);
+
+    //     vm.roll(block.number + governor.votingPeriod());
+
+    //     vm.prank(proposer);
+    //     governor.queue(1);
+
+    //     vm.prank(proposer);
+    //     vm.expectRevert(Governor.Governor__TransactionIsAlreadyQueued.selector);
+    //     governor.queue(1);
+    // }
 }
+
+// test queue()
