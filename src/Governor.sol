@@ -18,12 +18,18 @@ contract Governor is EIP712 {
     error Governor__AddressAlreadyVoted();
     error Governor__ProposalStatusMustBeSucceeded();
     error Governor__TransactionIsAlreadyQueued();
+    error Governor__CallerMustBeGuardian();
+    error Governor__ProposalCanNotBeCanceled();
+    error Governor__ProposalIsNotQueued();
 
     //token
     IGovernanceToken public token;
 
     //timelock
     ITimelock public timelock;
+
+    // can be immutable if no intention to change
+    address public guardian;
 
     string public constant GOVERNOR_NAME = "Governor";
     string public constant GOVERNOR_VERSION = "1";
@@ -98,14 +104,15 @@ contract Governor is EIP712 {
         uint256 startBlock,
         uint256 endBlock
     );
-
     event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
-
     event ProposalQueued(uint256 proposalId, uint256 eta);
+    event ProposalExecuted(uint256 proposalId);
+    event ProposalCanceled(uint256 proposalId);
 
-    constructor(address _token, address _timelock) EIP712(GOVERNOR_NAME, GOVERNOR_VERSION) {
+    constructor(address _token, address _timelock, address _guardian) EIP712(GOVERNOR_NAME, GOVERNOR_VERSION) {
         token = IGovernanceToken(_token);
         timelock = ITimelock(_timelock);
+        guardian = _guardian;
     }
 
     function propose(
@@ -212,6 +219,64 @@ contract Governor is EIP712 {
         }
 
         timelock.queueTransaction(proposalId, target, value, signature, data, eta);
+    }
+
+    function execute(uint256 proposalId) public payable {
+        // check if queued
+        if (state(proposalId) != ProposalState.Queued) {
+            revert Governor__ProposalIsNotQueued();
+        }
+
+        // execute proposal
+        Proposal storage proposal = proposals[proposalId];
+        proposal.executed = true;
+
+        // execute transactions
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            timelock.executeTransaction(
+                proposal.id,
+                proposal.targets[i],
+                proposal.values[i],
+                proposal.signatures[i],
+                proposal.calldatas[i],
+                proposal.eta
+            );
+        }
+
+        // emit event
+        emit ProposalExecuted(proposalId);
+    }
+
+    function cancel(uint256 proposalId) public {
+        // check if guardian
+        if (msg.sender != guardian) {
+            revert Governor__CallerMustBeGuardian();
+        }
+
+        // check if executed or canceled
+        ProposalState proposalState = state(proposalId);
+        if (proposalState == ProposalState.Executed || proposalState == ProposalState.Canceled) {
+            revert Governor__ProposalCanNotBeCanceled();
+        }
+
+        // cancel proposal
+        Proposal storage proposal = proposals[proposalId];
+        proposal.canceled = true;
+
+        // cancel transactions
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            timelock.cancelTransaction(
+                proposal.id,
+                proposal.targets[i],
+                proposal.values[i],
+                proposal.signatures[i],
+                proposal.calldatas[i],
+                proposal.eta
+            );
+        }
+
+        //emit event
+        emit ProposalCanceled(proposalId);
     }
 
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
@@ -334,3 +399,7 @@ contract Governor is EIP712 {
         return 30; // 30% of total supply
     }
 }
+
+// execute()
+// cancel()
+// test getters
