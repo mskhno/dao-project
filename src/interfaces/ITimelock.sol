@@ -14,5 +14,23 @@ interface ITimelock {
         string calldata signature,
         bytes calldata data,
         uint256 eta
-    ) external returns (bytes32);
+    ) external;
+
+    function executeTransaction(
+        uint256 proposalId,
+        address target,
+        uint256 value,
+        string calldata signature,
+        bytes calldata data,
+        uint256 eta
+    ) external;
+
+    function cancelTransaction(
+        uint256 proposalId,
+        address target,
+        uint256 value,
+        string memory signature,
+        bytes memory callData,
+        uint256 eta
+    ) external;
 }
