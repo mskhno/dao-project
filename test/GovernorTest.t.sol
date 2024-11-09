@@ -7,12 +7,17 @@ import {Governor} from "src/Governor.sol";
 import {Timelock} from "src/Timelock.sol";
 import {GovernanceTokenMint} from "test/mocks/GovernanceTokenMint.sol";
 
+import {Box} from "test/mocks/Box.sol";
+
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract GovernorTest is Test {
     Governor public governor;
     GovernanceTokenMint public token;
     Timelock public timelock;
+    Box public box;
+
+    address public guardian = makeAddr("guardian");
 
     address public proposer;
     uint256 public proposerKey;
@@ -35,13 +40,15 @@ contract GovernorTest is Test {
     );
     event VoteCasted(address voter, uint256 proposalId, bool support, uint256 votes);
     event ProposalQueued(uint256 proposalId, uint256 eta);
+    event ProposalExecuted(uint256 proposalId);
+    event ProposalCanceled(uint256 proposalId);
 
     function setUp() public {
         token = new GovernanceTokenMint(address(this));
 
         timelock = new Timelock(TIMELOCK_DELAY);
 
-        governor = new Governor(address(token), address(timelock));
+        governor = new Governor(address(token), address(timelock), guardian);
 
         timelock.transferOwnership(address(governor));
 
@@ -59,6 +66,8 @@ contract GovernorTest is Test {
         );
 
         (proposer, proposerKey) = makeAddrAndKey("proposer");
+
+        box = new Box();
     }
 
     modifier proposerCanPropose() {
@@ -89,6 +98,63 @@ contract GovernorTest is Test {
         vm.prank(proposer);
         governor.propose(targets, values, signatures, calldatas);
 
+        _;
+    }
+
+    modifier proposalCreatedVoting() {
+        token.mint(proposer, governor.proposalThreshold());
+        vm.prank(proposer);
+        token.delegate(proposer);
+
+        vm.roll(block.number + 1);
+
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        string[] memory signatures = new string[](1);
+        bytes[] memory calldatas = new bytes[](1);
+
+        targets[0] = address(token);
+        values[0] = 0;
+        signatures[0] = "delegate(address)";
+        calldatas[0] = abi.encodeWithSignature(signatures[0], proposer, values[0]);
+
+        vm.prank(proposer);
+        governor.propose(targets, values, signatures, calldatas);
+
+        vm.roll(block.number + governor.votingDelay());
+        _;
+    }
+
+    modifier proposalBoxStore5() {
+        token.mint(proposer, governor.proposalThreshold());
+        vm.prank(proposer);
+        token.delegate(proposer);
+
+        vm.roll(block.number + 1);
+
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        string[] memory signatures = new string[](1);
+        bytes[] memory calldatas = new bytes[](1);
+
+        targets[0] = address(box);
+        values[0] = 0;
+        signatures[0] = "store(uint256)";
+        calldatas[0] = abi.encode(5);
+
+        vm.startPrank(proposer);
+        governor.propose(targets, values, signatures, calldatas);
+
+        vm.roll(block.number + governor.votingDelay());
+
+        governor.castVote(1, true);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        governor.queue(1);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + timelock.delay());
         _;
     }
 
@@ -344,11 +410,7 @@ contract GovernorTest is Test {
         assertEq(uint256(actualState), uint256(Governor.ProposalState.Pending));
     }
 
-    function test_state_returnsActive() public proposalCreated {
-        assertEq(governor.proposalCount(), 1);
-
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_state_returnsActive() public proposalCreatedVoting {
         Governor.ProposalState actualState = governor.state(1);
 
         assertEq(uint256(actualState), uint256(Governor.ProposalState.Active));
@@ -364,9 +426,7 @@ contract GovernorTest is Test {
         governor.castVote(1, true);
     }
 
-    function test_castVote_UserCanVote() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_castVote_UserCanVote() public proposalCreatedVoting {
         (,,,,, uint256 initialForVotes,,,) = governor.proposals(1);
 
         assertEq(initialForVotes, 0);
@@ -394,9 +454,7 @@ contract GovernorTest is Test {
         assertEq(receipt.votes, expectedForVotes);
     }
 
-    function test_castVote_revertsWhenUserHasVoted() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_castVote_revertsWhenUserHasVoted() public proposalCreatedVoting {
         vm.prank(proposer);
         governor.castVote(1, true);
 
@@ -405,12 +463,7 @@ contract GovernorTest is Test {
         governor.castVote(1, true);
     }
 
-    function test_castVote_emitsEvent() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
-        console.log("proposer balance:", token.balanceOf(proposer));
-        console.log("proposer votes:", token.getPastVotes(proposer, block.number - 1));
-
+    function test_castVote_emitsEvent() public proposalCreatedVoting {
         vm.prank(proposer);
         vm.expectEmit(false, false, false, true);
         emit VoteCasted(proposer, 1, true, 1000);
@@ -421,9 +474,7 @@ contract GovernorTest is Test {
     /// castVoteBySig()
     /////////////
 
-    function test_castVoteBySig_castsVote() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_castVoteBySig_castsVote() public proposalCreatedVoting {
         bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, 1, true));
         bytes32 digest = MessageHashUtils.toTypedDataHash(GOVERNOR_DOMAIN_SEPARATOR, structHash);
 
@@ -459,17 +510,13 @@ contract GovernorTest is Test {
     /// queue()
     /////////////
 
-    function test_queue_revertsWhenProposalStateIsNotSucceeded() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_queue_revertsWhenProposalStateIsNotSucceeded() public proposalCreatedVoting {
         vm.prank(proposer);
         vm.expectRevert(Governor.Governor__ProposalStatusMustBeSucceeded.selector);
         governor.queue(1);
     }
 
-    function test_queue_queuesTransaction() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_queue_queuesTransaction() public proposalCreatedVoting {
         address target = address(token);
         uint256 value = 0;
         string memory signature = "delegate(address)";
@@ -495,9 +542,7 @@ contract GovernorTest is Test {
         assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
     }
 
-    function test_queue_emitsEvent() public proposalCreated {
-        vm.roll(block.number + governor.votingDelay());
-
+    function test_queue_emitsEvent() public proposalCreatedVoting {
         vm.prank(proposer);
         governor.castVote(1, true);
 
@@ -512,9 +557,7 @@ contract GovernorTest is Test {
     }
 
     //// fails because state is updated to queued
-    // function test_queue_revertsWhenTransactionIsAlreadyQueued() public proposalCreated {
-    //     vm.roll(block.number + governor.votingDelay());
-
+    // function test_queue_revertsWhenTransactionIsAlreadyQueued() public proposalCreatedVoting {
     //     vm.prank(proposer);
     //     governor.castVote(1, true);
 
@@ -527,6 +570,84 @@ contract GovernorTest is Test {
     //     vm.expectRevert(Governor.Governor__TransactionIsAlreadyQueued.selector);
     //     governor.queue(1);
     // }
-}
 
-// test queue()
+    /////////////
+    /// execute()
+    /////////////
+
+    function test_execute_revertsWhenProposalStateIsNotQueued() public proposalCreatedVoting {
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__ProposalIsNotQueued.selector);
+        governor.execute(1);
+    }
+
+    function test_execute_executesProposalAndEmitsEvent() public proposalBoxStore5 {
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
+
+        (,,,,,,,, bool proposalExecuted) = governor.proposals(1);
+        assertEq(proposalExecuted, false);
+
+        uint256 expectedValue = 5;
+
+        assertEq(box.retrieve(), 0);
+
+        vm.prank(proposer);
+        vm.expectEmit(false, false, false, true);
+        emit ProposalExecuted(1);
+        governor.execute(1);
+
+        assertEq(box.retrieve(), expectedValue);
+
+        (,,,,,,,, bool afterProposalExecuted) = governor.proposals(1);
+        assertEq(afterProposalExecuted, true);
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Executed));
+    }
+
+    /////////////
+    /// cancel()
+    /////////////
+
+    function test_cancel_revertsWhenCallerIsNotGuardian() public proposalCreatedVoting {
+        vm.prank(proposer);
+        vm.expectRevert(Governor.Governor__CallerMustBeGuardian.selector);
+        governor.cancel(1);
+    }
+
+    function test_cancel_revertsWhenProposalExecutedOrCanceled() public proposalBoxStore5 {
+        governor.execute(1);
+
+        vm.prank(guardian);
+        vm.expectRevert(Governor.Governor__ProposalCanNotBeCanceled.selector);
+        governor.cancel(1);
+    }
+
+    // test when canceled
+    function test_cancel_revertsWhenProposalExecutedOrCanceled2() public proposalBoxStore5 {}
+
+    function test_cancel_cancelsProposalAndEmitsEvent() public proposalBoxStore5 {
+        // check proposal.canceled changed
+        // check transactions are canceled
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
+
+        (,,,,,,, bool proposalCanceled,) = governor.proposals(1);
+
+        assertEq(proposalCanceled, false);
+
+        bytes32 txHash = keccak256(abi.encode(1, address(box), 0, "store(uint256)", abi.encode(5), block.timestamp));
+
+        assertEq(timelock.queuedTransactions(txHash), true);
+
+        vm.prank(guardian);
+        vm.expectEmit(false, false, false, true);
+        emit ProposalCanceled(1);
+        governor.cancel(1);
+
+        (,,,,,,, bool afterProposalCanceled,) = governor.proposals(1);
+
+        assertEq(afterProposalCanceled, true);
+
+        assertEq(timelock.queuedTransactions(txHash), false);
+    }
+}
