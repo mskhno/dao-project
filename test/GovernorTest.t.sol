@@ -732,11 +732,29 @@ contract GovernorTest is Test {
         assertEq(timelock.queuedTransactions(txHash), false);
     }
 
-    // Governor.sol
-    //// test state()
-    //// increase branches coverage
-    //// test getters
-    //// check other possibilities to increase coverage
+    /////////////
+    /// getters
+    /////////////
+
+    function test_proposalThreshold() public view {
+        assertEq(governor.proposalThreshold(), 1000);
+    }
+
+    function test_proposalMaxOperations() public view {
+        assertEq(governor.proposalMaxOperations(), 10);
+    }
+
+    function test_votingDelay() public view {
+        assertEq(governor.votingDelay(), 14400);
+    }
+
+    function test_votingPeriod() public view {
+        assertEq(governor.votingPeriod(), 21600);
+    }
+
+    function test_quorumVotes() public view {
+        assertEq(governor.quorumVotes(), 30);
+    }
 
     // Timelock.sol
     //// test onlyOwner
