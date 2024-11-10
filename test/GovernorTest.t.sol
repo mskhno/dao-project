@@ -402,6 +402,15 @@ contract GovernorTest is Test {
         governor.state(2);
     }
 
+    function test_state_returnsCanceled() public proposalBoxStore5 {
+        vm.prank(guardian);
+        governor.cancel(1);
+
+        Governor.ProposalState actualState = governor.state(1);
+
+        assertEq(uint256(actualState), uint256(Governor.ProposalState.Canceled));
+    }
+
     function test_state_returnsPending() public proposalCreated {
         assertEq(governor.proposalCount(), 1);
 
@@ -414,6 +423,78 @@ contract GovernorTest is Test {
         Governor.ProposalState actualState = governor.state(1);
 
         assertEq(uint256(actualState), uint256(Governor.ProposalState.Active));
+    }
+
+    function test_state_returnsDefeated() public proposalCreatedVoting {
+        vm.prank(proposer);
+        governor.castVote(1, false);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Defeated));
+    }
+
+    // test reaching quorum
+    function test_state_returnsDefeated2() public {
+        address user = makeAddr("user");
+
+        token.mint(proposer, 1000);
+        token.mint(user, 9000);
+
+        vm.prank(proposer);
+        token.delegate(proposer);
+        vm.prank(user);
+        token.delegate(user);
+
+        vm.roll(block.number + 1);
+
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        string[] memory signatures = new string[](1);
+        bytes[] memory calldatas = new bytes[](1);
+
+        targets[0] = address(token);
+        values[0] = 0;
+        signatures[0] = "delegate(address)";
+        calldatas[0] = abi.encodeWithSignature(signatures[0], proposer, values[0]);
+
+        vm.prank(proposer);
+        governor.propose(targets, values, signatures, calldatas);
+
+        vm.roll(block.number + governor.votingDelay());
+
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Defeated));
+    }
+
+    function test_state_returnsSucceeded() public proposalCreatedVoting {
+        vm.prank(proposer);
+        governor.castVote(1, true);
+
+        vm.roll(block.number + governor.votingPeriod());
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Succeeded));
+    }
+
+    function test_state_returnsExecuted() public proposalBoxStore5 {
+        vm.prank(proposer);
+        governor.execute(1);
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Executed));
+    }
+
+    function test_state_returnsExpired() public proposalBoxStore5 {
+        vm.warp(block.timestamp + timelock.GRACE_PERIOD());
+
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Expired));
+    }
+
+    function test_state_returnsQueued() public proposalBoxStore5 {
+        assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
     }
 
     /////////////
@@ -650,4 +731,27 @@ contract GovernorTest is Test {
 
         assertEq(timelock.queuedTransactions(txHash), false);
     }
+
+    // Governor.sol
+    //// test state()
+    //// increase branches coverage
+    //// test getters
+    //// check other possibilities to increase coverage
+
+    // Timelock.sol
+    //// test onlyOwner
+    //// definetly need to test branches
+    //// also try to increase coverage
+
+    // Clean up
+    //// nat-spec Governor.sol
+    //// clean up comments
+    //// look through the code
+
+    //// nat-spec Timelock.sol
+    //// clean up comments
+    //// look through the code
+
+    //// clean up tests
+    //// rename to Integration
 }
