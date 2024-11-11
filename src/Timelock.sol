@@ -58,9 +58,9 @@ contract Timelock is ITimelock, Ownable {
      * @param signature Signature of the function to call
      * @param data Data to send to the target
      * @param eta Execution Time
-     * 
+     *
      * @notice Queue a transaction
-     * 
+     *
      * @dev Queues a single transaction to be executed after the i_delay()
      * @dev proposalId is used to exclude txHash collision with other proposals who may have the same transaction,
      * though very unlikely
@@ -87,7 +87,7 @@ contract Timelock is ITimelock, Ownable {
      * @param signature Signature of the function to call
      * @param data Data to send to the target
      * @param eta Execution Time
-     * 
+     *
      * @notice Execute a single transaction
      */
     function executeTransaction(
@@ -133,7 +133,7 @@ contract Timelock is ITimelock, Ownable {
      * @param signature Signature of the function to call
      * @param data Data to send to the target
      * @param eta Execution Time
-     * 
+     *
      * @notice Cancel a single transaction
      */
     function cancelTransaction(

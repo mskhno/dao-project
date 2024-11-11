@@ -11,12 +11,12 @@ import {Box} from "test/mocks/Box.sol";
 /**
  * This test suite is focused on increasing coverage on Timelock.sol,
  * since GovernorTest.t.sol is already covering a lot
- * 
+ *
  * Mainly branches testing
  */
 contract TimelockTest is Test {
     Timelock public timelock;
-    Box public box; 
+    Box public box;
 
     address public caller = makeAddr("caller");
 
@@ -114,7 +114,7 @@ contract TimelockTest is Test {
         vm.warp(block.timestamp + timelock.delay());
 
         assertEq(box.retrieve(), 0);
-        
+
         timelock.executeTransaction(1, target, value, signature, callData, eta);
 
         assertEq(box.retrieve(), 5);
@@ -132,7 +132,7 @@ contract TimelockTest is Test {
         vm.warp(block.timestamp + timelock.delay());
 
         assertEq(box.retrieve(), 0);
-        
+
         timelock.executeTransaction(1, target, value, signature, callData, eta);
 
         assertEq(box.retrieve(), 5);
@@ -150,10 +150,10 @@ contract TimelockTest is Test {
         vm.warp(block.timestamp + timelock.delay());
 
         assertEq(box.retrieve(), 0);
-        
+
         vm.expectRevert(Timelock.Timelock__TransactionExecutionReverted.selector);
         timelock.executeTransaction(1, target, value, signature, callData, eta);
     }
-    
-    // test the rest of branches 
+
+    // test the rest of branches
 }

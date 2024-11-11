@@ -124,7 +124,7 @@ contract Governor is EIP712 {
      * @param signatures List of function signatures to call
      * @param calldatas List of calldatas to send
      * @return proposalId The ID of the created proposal
-     * 
+     *
      * @notice Propose a new proposal
      */
     function propose(
@@ -190,9 +190,9 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to queue after it has succeeded
-     * 
+     *
      * @notice Queue proposal to execute later
-     * 
+     *
      * @dev Transactions are queued in the Timelock contract
      */
     function queue(uint256 proposalId) external {
@@ -216,9 +216,9 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to execute
-     * 
+     *
      * @notice Execute proposal
-     * 
+     *
      * @dev Transactions are executed by the Timelock contract
      * @dev Values sent to the contracts are sent by the Timelock contract
      */
@@ -246,9 +246,9 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to cancel
-     * 
+     *
      * @notice Cancel proposal before it is executed
-     * 
+     *
      * @dev Only guardian address can cancel proposals
      */
     function cancel(uint256 proposalId) external {
@@ -281,7 +281,7 @@ contract Governor is EIP712 {
     /**
      * @param proposalId The ID of the proposal to cast a vote on
      * @param support Whether to support the proposal or not
-     * 
+     *
      * @notice Vote for or against a proposal
      */
     function castVote(uint256 proposalId, bool support) external {
@@ -294,9 +294,9 @@ contract Governor is EIP712 {
      * @param v Signature component v
      * @param r Signature component r
      * @param s Signature component s
-     * 
+     *
      * @notice Vote for or against a proposal with a signature
-     * 
+     *
      * @dev Maybe add address voter to Ballot struct and check if signer == voter
      */
     function castVoteBySig(uint256 proposalId, bool support, uint8 v, bytes32 r, bytes32 s) external {
@@ -317,7 +317,7 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to get the actions of
-     * 
+     *
      * @return targets Contract addresses of proposal's transactions
      * @return values Values to send to the contracts
      * @return signatures Function signatures to call
@@ -339,9 +339,9 @@ contract Governor is EIP712 {
     /**
      * @param proposalId The ID of the proposal to get the receipt of
      * @param voter The address of the voter to get the receipt of
-     * 
+     *
      * @return receipt The receipt of the voter
-     * 
+     *
      * @notice Get the receipt of a voter from a proposal
      */
     function getReceipt(uint256 proposalId, address voter) external view returns (Receipt memory) {
@@ -351,7 +351,7 @@ contract Governor is EIP712 {
     //////////////
     // INTERNAL FUNCTIONS
     //////////////
-    
+
     /**
      * @param proposalId The ID of the proposal to queue
      * @param target The contract address to interact with
@@ -359,9 +359,9 @@ contract Governor is EIP712 {
      * @param signature The function signature to call
      * @param data The calldata to send
      * @param eta The timestamp to execute the transaction
-     * 
+     *
      * @dev Queue single transaction in the Timelock contract
-     * 
+     *
      */
     function _queueTransaction(
         uint256 proposalId,
@@ -386,7 +386,7 @@ contract Governor is EIP712 {
      * @param voter The address of the voter to cast a vote
      * @param proposalId The ID of the proposal to cast a vote on
      * @param support Whether to support the proposal or not
-     * 
+     *
      * @dev Cast a vote on a proposal
      */
     function _castVote(address voter, uint256 proposalId, bool support) internal {
@@ -418,9 +418,9 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to check
-     * 
+     *
      * @return bool Whether the proposal meets the quorum
-     * 
+     *
      * @dev Check if the proposal meets the quorum
      */
     function _checkProposalMeetsQuorum(uint256 proposalId) internal view returns (bool) {
@@ -440,9 +440,9 @@ contract Governor is EIP712 {
 
     /**
      * @param proposalId The ID of the proposal to get the state of
-     * 
+     *
      * @return proposalState The state of the proposal
-     * 
+     *
      * @notice Get the state of a proposal
      */
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
@@ -475,7 +475,7 @@ contract Governor is EIP712 {
      * @return uint256 The threshold of votes needed to propose
      */
     function proposalThreshold() public pure returns (uint256) {
-        return 1000; 
+        return 1000;
     }
 
     /**
@@ -487,16 +487,16 @@ contract Governor is EIP712 {
 
     /**
      * @return uint256 The delay in blocks before a proposal can be executed
-     * 
+     *
      * @dev 2 days in blocks, assuming 12s blocks
      */
     function votingDelay() public pure returns (uint256) {
-        return 14400; 
+        return 14400;
     }
-    
+
     /**
      * @return uint256 The period in blocks where votes can be cast
-     * 
+     *
      * @dev 3 days in blocks, assuming 12s blocks
      */
     function votingPeriod() public pure returns (uint256) {
