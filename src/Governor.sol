@@ -7,7 +7,16 @@ import {ITimelock} from "src/interfaces/ITimelock.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
+/**
+ * @title Governor
+ * @dev Governor contract for voting on proposals
+ *
+ * Simple DAO Governor, basically the same as Compound's GovernorAlpha
+ */
 contract Governor is EIP712 {
+    //////////////
+    // ERRORS
+    //////////////
     error Governor__ProposalThresholdNotMet();
     error Governor__InvalidAmountOfTargets();
     error Governor__ArrayLengthsMismatch();
@@ -22,64 +31,47 @@ contract Governor is EIP712 {
     error Governor__ProposalCanNotBeCanceled();
     error Governor__ProposalIsNotQueued();
 
-    //token
-    IGovernanceToken public token;
+    //////////////
+    // STATE VARIABLES
+    //////////////
+    IGovernanceToken public immutable i_token;
+    ITimelock public immutable i_timelock;
 
-    //timelock
-    ITimelock public timelock;
+    address public immutable i_guardian;
 
-    // can be immutable if no intention to change
-    address public guardian;
+    string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)"; // include address voter?
 
     string public constant GOVERNOR_NAME = "Governor";
     string public constant GOVERNOR_VERSION = "1";
 
-    string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)";
+    uint256 public proposalCount;
 
-    uint256 public proposalCount; // total number of proposals, incremented before proposal is created. 0 id is used to check for collisions
+    mapping(uint256 proposalId => Proposal) public proposals;
+    mapping(address account => uint256 proposalId) public latestProposalIds;
 
-    mapping(uint256 proposalId => Proposal) public proposals; // mapping of all proposals
-
-    mapping(address account => uint256 proposalId) public latestProposalIds; // mapping of the latest proposal for each address
-
+    //////////////
+    // TYPES
+    //////////////
     struct Proposal {
-        /// @notice Unique id for looking up a proposal
         uint256 id;
-        /// @notice Creator of the proposal
         address proposer;
-        /// @notice The timestamp that the proposal will be available for execution, set once the vote succeeds
         uint256 eta;
-        /// @notice the ordered list of target addresses for calls to be made
         address[] targets;
-        /// @notice The ordered list of values (i.e. msg.value) to be passed to the calls to be made
         uint256[] values;
-        /// @notice The ordered list of function signatures to be called
         string[] signatures;
-        /// @notice The ordered list of calldata to be passed to each call
         bytes[] calldatas;
-        /// @notice The block at which voting begins: holders must delegate their votes prior to this block
         uint256 startBlock;
-        /// @notice The block at which voting ends: votes must be cast prior to this block
         uint256 endBlock;
-        /// @notice Current number of votes in favor of this proposal
         uint256 forVotes;
-        /// @notice Current number of votes in opposition to this proposal
         uint256 againstVotes;
-        /// @notice Flag marking whether the proposal has been canceled
         bool canceled;
-        /// @notice Flag marking whether the proposal has been executed
         bool executed;
-        /// @notice Receipts of ballots for the entire set of voters
         mapping(address voter => Receipt) receipts;
     }
 
-    /// @notice Ballot receipt record for a voter
     struct Receipt {
-        /// @notice Whether or not a vote has been cast
         bool hasVoted;
-        /// @notice Whether or not the voter supports the proposal
         bool support;
-        /// @notice The number of votes the voter had, which were cast
         uint256 votes;
     }
 
@@ -94,6 +86,9 @@ contract Governor is EIP712 {
         Executed
     }
 
+    //////////////
+    // EVENTS
+    //////////////
     event ProposalCreated(
         uint256 id,
         address proposer,
@@ -109,37 +104,49 @@ contract Governor is EIP712 {
     event ProposalExecuted(uint256 proposalId);
     event ProposalCanceled(uint256 proposalId);
 
+    //////////////
+    // FUNCTIONS
+    //////////////
+
     constructor(address _token, address _timelock, address _guardian) EIP712(GOVERNOR_NAME, GOVERNOR_VERSION) {
-        token = IGovernanceToken(_token);
-        timelock = ITimelock(_timelock);
-        guardian = _guardian;
+        i_token = IGovernanceToken(_token);
+        i_timelock = ITimelock(_timelock);
+        i_guardian = _guardian;
     }
 
+    //////////////
+    // EXTERNAL FUNCTIONS
+    //////////////
+
+    /**
+     * @param targets List of contract addresses to interact with
+     * @param values List of values to send to the contracts
+     * @param signatures List of function signatures to call
+     * @param calldatas List of calldatas to send
+     * @return proposalId The ID of the created proposal
+     * 
+     * @notice Propose a new proposal
+     */
     function propose(
         address[] memory targets,
         uint256[] memory values,
         string[] memory signatures,
         bytes[] memory calldatas
-    ) public returns (uint256 proposalId) {
-        // do the checks
-
-        //check if proposer has enough votes
-        if (token.getPastVotes(msg.sender, block.number - 1) < proposalThreshold()) {
+    ) external returns (uint256 proposalId) {
+        if (i_token.getPastVotes(msg.sender, block.number - 1) < proposalThreshold()) {
             revert Governor__ProposalThresholdNotMet();
         }
 
-        // check if there are actions !=0 <-10
         if (targets.length == 0 || targets.length > proposalMaxOperations()) {
             revert Governor__InvalidAmountOfTargets();
         }
-        // check if lengtsh mismatch
+
         if (
             targets.length != values.length || targets.length != signatures.length || targets.length != calldatas.length
         ) {
             revert Governor__ArrayLengthsMismatch();
         }
 
-        // check if proposer has pending of active proposal? stop the spam?
         uint256 latestProposal = latestProposalIds[msg.sender];
         if (latestProposal != 0) {
             ProposalState proposalState = state(latestProposal);
@@ -156,6 +163,7 @@ contract Governor is EIP712 {
 
         Proposal storage newProposal = proposals[proposalId];
 
+        // potentially unreachable?
         if (newProposal.id != 0) {
             revert Governor__ProposalIdCollision();
         }
@@ -174,34 +182,187 @@ contract Governor is EIP712 {
         newProposal.canceled = false;
         newProposal.executed = false;
 
+        // should this be before the proposal is created?
         latestProposalIds[msg.sender] = proposalId;
 
         emit ProposalCreated(proposalId, msg.sender, targets, values, signatures, calldatas, startBlock, endBlock);
     }
 
-    // queue
-
-    function queue(uint256 proposalId) public {
-        // check state
+    /**
+     * @param proposalId The ID of the proposal to queue after it has succeeded
+     * 
+     * @notice Queue proposal to execute later
+     * 
+     * @dev Transactions are queued in the Timelock contract
+     */
+    function queue(uint256 proposalId) external {
         if (state(proposalId) != ProposalState.Succeeded) {
             revert Governor__ProposalStatusMustBeSucceeded();
         }
 
-        // queue
         Proposal storage proposal = proposals[proposalId];
-        uint256 eta = block.timestamp + timelock.delay();
+        uint256 eta = block.timestamp + i_timelock.delay();
+
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             _queueTransaction(
                 proposal.id, proposal.targets[i], proposal.values[i], proposal.signatures[i], proposal.calldatas[i], eta
             );
         }
+
         proposal.eta = eta;
 
-        // emit event
         emit ProposalQueued(proposalId, eta);
     }
 
-    // proposalId is debatable
+    /**
+     * @param proposalId The ID of the proposal to execute
+     * 
+     * @notice Execute proposal
+     * 
+     * @dev Transactions are executed by the Timelock contract
+     * @dev Values sent to the contracts are sent by the Timelock contract
+     */
+    function execute(uint256 proposalId) external payable {
+        if (state(proposalId) != ProposalState.Queued) {
+            revert Governor__ProposalIsNotQueued();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        proposal.executed = true;
+
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            i_timelock.executeTransaction(
+                proposal.id,
+                proposal.targets[i],
+                proposal.values[i],
+                proposal.signatures[i],
+                proposal.calldatas[i],
+                proposal.eta
+            );
+        }
+
+        emit ProposalExecuted(proposalId);
+    }
+
+    /**
+     * @param proposalId The ID of the proposal to cancel
+     * 
+     * @notice Cancel proposal before it is executed
+     * 
+     * @dev Only guardian address can cancel proposals
+     */
+    function cancel(uint256 proposalId) external {
+        if (msg.sender != i_guardian) {
+            revert Governor__CallerMustBeGuardian();
+        }
+
+        ProposalState proposalState = state(proposalId);
+        if (proposalState == ProposalState.Executed || proposalState == ProposalState.Canceled) {
+            revert Governor__ProposalCanNotBeCanceled();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        proposal.canceled = true;
+
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            i_timelock.cancelTransaction(
+                proposal.id,
+                proposal.targets[i],
+                proposal.values[i],
+                proposal.signatures[i],
+                proposal.calldatas[i],
+                proposal.eta
+            );
+        }
+
+        emit ProposalCanceled(proposalId);
+    }
+
+    /**
+     * @param proposalId The ID of the proposal to cast a vote on
+     * @param support Whether to support the proposal or not
+     * 
+     * @notice Vote for or against a proposal
+     */
+    function castVote(uint256 proposalId, bool support) external {
+        _castVote(msg.sender, proposalId, support);
+    }
+
+    /**
+     * @param proposalId The ID of the proposal to cast a vote on
+     * @param support Whether to support the proposal or not
+     * @param v Signature component v
+     * @param r Signature component r
+     * @param s Signature component s
+     * 
+     * @notice Vote for or against a proposal with a signature
+     * 
+     * @dev Maybe add address voter to Ballot struct and check if signer == voter
+     */
+    function castVoteBySig(uint256 proposalId, bool support, uint8 v, bytes32 r, bytes32 s) external {
+        // any checks at all? can it cast a random persons vote in case of random signature spam? sounds like i am not really understading something, missing out
+        // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется, в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены, чтобы его голос засчитался? трудно наверно но мозг мой вот так подумал
+        // add address voter to the signature and the check signer == voter?
+        bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, proposalId, support));
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        address signer = ECDSA.recover(digest, v, r, s);
+
+        _castVote(signer, proposalId, support);
+    }
+
+    //////////////
+    // EXTERNAL VIEW FUNCTIONS
+    //////////////
+
+    /**
+     * @param proposalId The ID of the proposal to get the actions of
+     * 
+     * @return targets Contract addresses of proposal's transactions
+     * @return values Values to send to the contracts
+     * @return signatures Function signatures to call
+     * @return calldatas Calldatas to send
+     */
+    function getActions(uint256 proposalId)
+        external
+        view
+        returns (address[] memory, uint256[] memory, string[] memory, bytes[] memory)
+    {
+        if (proposalId == 0 || proposalId > proposalCount) {
+            revert Governor__InvalidProposalId();
+        }
+
+        Proposal storage proposal = proposals[proposalId];
+        return (proposal.targets, proposal.values, proposal.signatures, proposal.calldatas);
+    }
+
+    /**
+     * @param proposalId The ID of the proposal to get the receipt of
+     * @param voter The address of the voter to get the receipt of
+     * 
+     * @return receipt The receipt of the voter
+     * 
+     * @notice Get the receipt of a voter from a proposal
+     */
+    function getReceipt(uint256 proposalId, address voter) external view returns (Receipt memory) {
+        return proposals[proposalId].receipts[voter];
+    }
+
+    //////////////
+    // INTERNAL FUNCTIONS
+    //////////////
+    
+    /**
+     * @param proposalId The ID of the proposal to queue
+     * @param target The contract address to interact with
+     * @param value The value to send to the contract
+     * @param signature The function signature to call
+     * @param data The calldata to send
+     * @param eta The timestamp to execute the transaction
+     * 
+     * @dev Queue single transaction in the Timelock contract
+     * 
+     */
     function _queueTransaction(
         uint256 proposalId,
         address target,
@@ -212,75 +373,79 @@ contract Governor is EIP712 {
     ) internal {
         bytes32 txHash = keccak256(abi.encode(proposalId, target, value, signature, data, eta));
 
-        if (timelock.queuedTransactions(txHash)) {
-            // can it happen? maybe if someone queues the transaction manually but no option like this in the system
-            // could happen in Compound maybe because txHash is made from tx data and proposal.eta, proposal.id is not included. prob really unlikely
+        // may be unnecessary check, because there is no way to manually queue a transaction in the timelock contract
+        // as a check for collision, it's really unlikely since txHash includes proposalId and proposal.eta
+        if (i_timelock.queuedTransactions(txHash)) {
             revert Governor__TransactionIsAlreadyQueued();
         }
 
-        timelock.queueTransaction(proposalId, target, value, signature, data, eta);
+        i_timelock.queueTransaction(proposalId, target, value, signature, data, eta);
     }
 
-    function execute(uint256 proposalId) public payable {
-        // check if queued
-        if (state(proposalId) != ProposalState.Queued) {
-            revert Governor__ProposalIsNotQueued();
+    /**
+     * @param voter The address of the voter to cast a vote
+     * @param proposalId The ID of the proposal to cast a vote on
+     * @param support Whether to support the proposal or not
+     * 
+     * @dev Cast a vote on a proposal
+     */
+    function _castVote(address voter, uint256 proposalId, bool support) internal {
+        if (state(proposalId) != ProposalState.Active) {
+            revert Governor__ProposalIsNotActive();
         }
 
-        // execute proposal
         Proposal storage proposal = proposals[proposalId];
-        proposal.executed = true;
+        Receipt storage receipt = proposal.receipts[voter];
 
-        // execute transactions
-        for (uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.executeTransaction(
-                proposal.id,
-                proposal.targets[i],
-                proposal.values[i],
-                proposal.signatures[i],
-                proposal.calldatas[i],
-                proposal.eta
-            );
+        if (receipt.hasVoted) {
+            revert Governor__AddressAlreadyVoted();
         }
 
-        // emit event
-        emit ProposalExecuted(proposalId);
+        uint256 votes = i_token.getPastVotes(voter, proposal.startBlock - 1);
+
+        if (support) {
+            proposal.forVotes += votes;
+        } else {
+            proposal.againstVotes += votes;
+        }
+
+        receipt.hasVoted = true;
+        receipt.support = support;
+        receipt.votes = votes;
+
+        emit VoteCasted(voter, proposalId, support, votes);
     }
 
-    function cancel(uint256 proposalId) public {
-        // check if guardian
-        if (msg.sender != guardian) {
-            revert Governor__CallerMustBeGuardian();
-        }
-
-        // check if executed or canceled
-        ProposalState proposalState = state(proposalId);
-        if (proposalState == ProposalState.Executed || proposalState == ProposalState.Canceled) {
-            revert Governor__ProposalCanNotBeCanceled();
-        }
-
-        // cancel proposal
+    /**
+     * @param proposalId The ID of the proposal to check
+     * 
+     * @return bool Whether the proposal meets the quorum
+     * 
+     * @dev Check if the proposal meets the quorum
+     */
+    function _checkProposalMeetsQuorum(uint256 proposalId) internal view returns (bool) {
         Proposal storage proposal = proposals[proposalId];
-        proposal.canceled = true;
+        uint256 quorumAmount = (i_token.getPastTotalSupply(proposal.startBlock - 1)) * quorumVotes() / 100; // precision loss?
 
-        // cancel transactions
-        for (uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.cancelTransaction(
-                proposal.id,
-                proposal.targets[i],
-                proposal.values[i],
-                proposal.signatures[i],
-                proposal.calldatas[i],
-                proposal.eta
-            );
+        if (proposal.forVotes + proposal.againstVotes >= quorumAmount) {
+            return true;
         }
 
-        //emit event
-        emit ProposalCanceled(proposalId);
+        return false;
     }
 
+    //////////////
+    // GETTERS
+    //////////////
+
+    /**
+     * @param proposalId The ID of the proposal to get the state of
+     * 
+     * @return proposalState The state of the proposal
+     * 
+     * @notice Get the state of a proposal
+     */
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
-        // check proposal id to be >0 and <= proposalCount
         if (proposalId == 0 || proposalId > proposalCount) {
             revert Governor__InvalidProposalId();
         }
@@ -299,107 +464,49 @@ contract Governor is EIP712 {
             return ProposalState.Succeeded;
         } else if (proposal.executed) {
             return ProposalState.Executed;
-        } else if (block.timestamp >= proposal.eta + timelock.GRACE_PERIOD()) {
+        } else if (block.timestamp >= proposal.eta + i_timelock.GRACE_PERIOD()) {
             return ProposalState.Expired;
         } else {
             return ProposalState.Queued;
         }
     }
 
-    function _checkProposalMeetsQuorum(uint256 proposalId) internal view returns (bool) {
-        Proposal storage proposal = proposals[proposalId];
-        uint256 quorumAmount = (token.getPastTotalSupply(proposal.startBlock - 1)) * quorumVotes() / 100; // precision loss?
-
-        if (proposal.forVotes + proposal.againstVotes >= quorumAmount) {
-            return true;
-        }
-
-        return false;
-    }
-
-    // voting
-    function castVote(uint256 proposalId, bool support) public {
-        _castVote(msg.sender, proposalId, support);
-    }
-
-    function castVoteBySig(uint256 proposalId, bool support, uint8 v, bytes32 r, bytes32 s) public {
-        // any checks at all? can it cast a random persons vote in case of random signature spam? sounds like i am not really understading something, missing out
-        // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется, в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены, чтобы его голос засчитался? трудно наверно но мозг мой вот так подумал
-        bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, proposalId, support));
-        bytes32 digest = _hashTypedDataV4(structHash);
-
-        address signer = ECDSA.recover(digest, v, r, s);
-
-        _castVote(signer, proposalId, support);
-    }
-
-    function _castVote(address voter, uint256 proposalId, bool support) internal {
-        // check if its active proposal
-        if (state(proposalId) != ProposalState.Active) {
-            revert Governor__ProposalIsNotActive();
-        }
-
-        Proposal storage proposal = proposals[proposalId];
-        Receipt storage receipt = proposal.receipts[voter];
-
-        // check if they voted
-        if (receipt.hasVoted) {
-            revert Governor__AddressAlreadyVoted();
-        }
-
-        uint256 votes = token.getPastVotes(voter, proposal.startBlock - 1); // voting starts AT startBlock, votes should be delegated before
-
-        if (support) {
-            proposal.forVotes += votes;
-        } else {
-            proposal.againstVotes += votes;
-        }
-
-        receipt.hasVoted = true;
-        receipt.support = support;
-        receipt.votes = votes;
-
-        emit VoteCasted(voter, proposalId, support, votes);
-    }
-
-    function getActions(uint256 proposalId)
-        public
-        view
-        returns (address[] memory, uint256[] memory, string[] memory, bytes[] memory)
-    {
-        if (proposalId == 0 || proposalId > proposalCount) {
-            revert Governor__InvalidProposalId();
-        }
-
-        Proposal storage proposal = proposals[proposalId];
-        return (proposal.targets, proposal.values, proposal.signatures, proposal.calldatas);
-    }
-
-    function getReceipt(uint256 proposalId, address voter) public view returns (Receipt memory) {
-        return proposals[proposalId].receipts[voter];
-    }
-
+    /**
+     * @return uint256 The threshold of votes needed to propose
+     */
     function proposalThreshold() public pure returns (uint256) {
-        return 1000; // might fail check in tests
+        return 1000; 
     }
 
+    /**
+     * @return uint256 The maximum amount of operations in a proposal
+     */
     function proposalMaxOperations() public pure returns (uint256) {
         return 10;
     }
 
+    /**
+     * @return uint256 The delay in blocks before a proposal can be executed
+     * 
+     * @dev 2 days in blocks, assuming 12s blocks
+     */
     function votingDelay() public pure returns (uint256) {
-        return 14400; // 2 days in blocks (assuming 12s blocks)
+        return 14400; 
     }
-
+    
+    /**
+     * @return uint256 The period in blocks where votes can be cast
+     * 
+     * @dev 3 days in blocks, assuming 12s blocks
+     */
     function votingPeriod() public pure returns (uint256) {
-        return 21600; // 3 days in blocks (assuming 12s blocks)
+        return 21600;
     }
 
+    /**
+     * @return uint256 The percentage of total supply needed for quorum
+     */
     function quorumVotes() public pure returns (uint256) {
-        return 30; // 30% of total supply
+        return 30;
     }
 }
-
-// execute()
-// cancel()
-// test getters

@@ -3,7 +3,6 @@ pragma solidity ^0.8.22;
 
 interface ITimelock {
     function GRACE_PERIOD() external view returns (uint256);
-    function delay() external view returns (uint256);
 
     function queuedTransactions(bytes32) external view returns (bool);
 
@@ -33,4 +32,6 @@ interface ITimelock {
         bytes memory callData,
         uint256 eta
     ) external;
+
+    function delay() external view returns (uint256);
 }

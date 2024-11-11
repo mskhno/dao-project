@@ -70,6 +70,9 @@ contract GovernorTest is Test {
         box = new Box();
     }
 
+    /////////////
+    /// MODIFIERS
+    /////////////
     modifier proposerCanPropose() {
         token.mint(proposer, governor.proposalThreshold());
         vm.prank(proposer);
@@ -222,6 +225,8 @@ contract GovernorTest is Test {
         vm.expectRevert(Governor.Governor__ArrayLengthsMismatch.selector);
         governor.propose(targets, newValues, newSignatures, calldatas);
     }
+
+    // fails because of stack too deep
 
     // function test_propose_createsProposal() public proposerCanPropose {
     //     address[] memory targets = new address[](1);
@@ -434,7 +439,6 @@ contract GovernorTest is Test {
         assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Defeated));
     }
 
-    // test reaching quorum
     function test_state_returnsDefeated2() public {
         address user = makeAddr("user");
 
@@ -703,13 +707,9 @@ contract GovernorTest is Test {
         governor.cancel(1);
     }
 
-    // test when canceled
     function test_cancel_revertsWhenProposalExecutedOrCanceled2() public proposalBoxStore5 {}
 
     function test_cancel_cancelsProposalAndEmitsEvent() public proposalBoxStore5 {
-        // check proposal.canceled changed
-        // check transactions are canceled
-
         assertEq(uint256(governor.state(1)), uint256(Governor.ProposalState.Queued));
 
         (,,,,,,, bool proposalCanceled,) = governor.proposals(1);
@@ -755,21 +755,4 @@ contract GovernorTest is Test {
     function test_quorumVotes() public view {
         assertEq(governor.quorumVotes(), 30);
     }
-
-    // Timelock.sol
-    //// test onlyOwner
-    //// definetly need to test branches
-    //// also try to increase coverage
-
-    // Clean up
-    //// nat-spec Governor.sol
-    //// clean up comments
-    //// look through the code
-
-    //// nat-spec Timelock.sol
-    //// clean up comments
-    //// look through the code
-
-    //// clean up tests
-    //// rename to Integration
 }
