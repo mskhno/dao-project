@@ -39,6 +39,7 @@ contract Governor is EIP712 {
 
     address public immutable i_guardian;
 
+    //@audit vlad. Не нужно, address "достаётся" при `ECDSA.recover()`
     string public constant BALLOT_TYPEHASH = "Ballot(uint256 proposalId,bool support)"; // include address voter?
 
     string public constant GOVERNOR_NAME = "Governor";
@@ -58,6 +59,8 @@ contract Governor is EIP712 {
         uint256 eta;
         address[] targets;
         uint256[] values;
+        //@audit vlad. Везде в коде ты переводишь string в bytes когда обрабатываешь
+        // Поэтому можно сразу `bytes[]` использовать
         string[] signatures;
         bytes[] calldatas;
         uint256 startBlock;
@@ -148,6 +151,7 @@ contract Governor is EIP712 {
         }
 
         uint256 latestProposal = latestProposalIds[msg.sender];
+        //@note норм
         if (latestProposal != 0) {
             ProposalState proposalState = state(latestProposal);
             if (proposalState == ProposalState.Active || proposalState == ProposalState.Pending) {
@@ -163,6 +167,7 @@ contract Governor is EIP712 {
 
         Proposal storage newProposal = proposals[proposalId];
 
+        //@audit vlad. вроде бы unreacheable
         // potentially unreachable?
         if (newProposal.id != 0) {
             revert Governor__ProposalIdCollision();
@@ -182,6 +187,7 @@ contract Governor is EIP712 {
         newProposal.canceled = false;
         newProposal.executed = false;
 
+        //@audit vlad. не важно, всё норм
         // should this be before the proposal is created?
         latestProposalIds[msg.sender] = proposalId;
 
@@ -222,6 +228,7 @@ contract Governor is EIP712 {
      * @dev Transactions are executed by the Timelock contract
      * @dev Values sent to the contracts are sent by the Timelock contract
      */
+    //@audit vlad. почему это payable?
     function execute(uint256 proposalId) external payable {
         if (state(proposalId) != ProposalState.Queued) {
             revert Governor__ProposalIsNotQueued();
@@ -300,8 +307,13 @@ contract Governor is EIP712 {
      * @dev Maybe add address voter to Ballot struct and check if signer == voter
      */
     function castVoteBySig(uint256 proposalId, bool support, uint8 v, bytes32 r, bytes32 s) external {
+//@audit vlad. Не, шанс коллизии слишком маленький. Из-за парадокса дней рождений шанс 1 коллизии 50% за 2^80 попыток
+// По фану можешь посмотреть с какой скоростью твой ноут печатает числа в цикле
+// При этом коллизия любых адресов, а делегаты 1 токена это супер мало адресов. Потом скину дискуссию по этому поводу (сейчас инета нету)
         // any checks at all? can it cast a random persons vote in case of random signature spam? sounds like i am not really understading something, missing out
-        // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется, в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены, чтобы его голос засчитался? трудно наверно но мозг мой вот так подумал
+        // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется, 
+    // в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены,
+    //чтобы его голос засчитался? трудно наверно но мозг мой вот так подумал
         // add address voter to the signature and the check signer == voter?
         bytes32 structHash = keccak256(abi.encode(BALLOT_TYPEHASH, proposalId, support));
         bytes32 digest = _hashTypedDataV4(structHash);
@@ -363,6 +375,7 @@ contract Governor is EIP712 {
      * @dev Queue single transaction in the Timelock contract
      *
      */
+    //@note норм
     function _queueTransaction(
         uint256 proposalId,
         address target,
@@ -373,6 +386,9 @@ contract Governor is EIP712 {
     ) internal {
         bytes32 txHash = keccak256(abi.encode(proposalId, target, value, signature, data, eta));
 
+//@audit vlad. С комментарием согласен
+// Также хочу заметить, что в нынешнем дизайне proposal не сможет содержать 2 одинаковых действия
+// То есть у них будут одинаковые параметры и одинаковый хэш. Вроде бы у Compaund это свойство есть тоже
         // may be unnecessary check, because there is no way to manually queue a transaction in the timelock contract
         // as a check for collision, it's really unlikely since txHash includes proposalId and proposal.eta
         if (i_timelock.queuedTransactions(txHash)) {
@@ -389,6 +405,7 @@ contract Governor is EIP712 {
      *
      * @dev Cast a vote on a proposal
      */
+    //@note норм
     function _castVote(address voter, uint256 proposalId, bool support) internal {
         if (state(proposalId) != ProposalState.Active) {
             revert Governor__ProposalIsNotActive();
@@ -423,8 +440,10 @@ contract Governor is EIP712 {
      *
      * @dev Check if the proposal meets the quorum
      */
+    //@note норм
     function _checkProposalMeetsQuorum(uint256 proposalId) internal view returns (bool) {
         Proposal storage proposal = proposals[proposalId];
+        //@audit vlad. Precision loss не будет, ну или он слишком малый
         uint256 quorumAmount = (i_token.getPastTotalSupply(proposal.startBlock - 1)) * quorumVotes() / 100; // precision loss?
 
         if (proposal.forVotes + proposal.againstVotes >= quorumAmount) {
@@ -445,6 +464,7 @@ contract Governor is EIP712 {
      *
      * @notice Get the state of a proposal
      */
+    //@note вроде норм, надеюсь ты с логикой здесь разобрался
     function state(uint256 proposalId) public view returns (ProposalState proposalState) {
         if (proposalId == 0 || proposalId > proposalCount) {
             revert Governor__InvalidProposalId();
@@ -474,6 +494,7 @@ contract Governor is EIP712 {
     /**
      * @return uint256 The threshold of votes needed to propose
      */
+    //@audit vlad. Не учитывает что токен имеет 18 decimals, считай proposalThreshold и нету
     function proposalThreshold() public pure returns (uint256) {
         return 1000;
     }

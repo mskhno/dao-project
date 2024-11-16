@@ -104,6 +104,7 @@ contract Timelock is ITimelock, Ownable {
             revert Timelock__TransactionIsNotQueued();
         }
 
+        //@note можно запустить только в период [eta; GRACE_PERIOD]
         if (block.timestamp < eta) {
             revert Timelock__DelayHasNotPassed();
         } else if (block.timestamp >= eta + GRACE_PERIOD) {
@@ -112,12 +113,17 @@ contract Timelock is ITimelock, Ownable {
 
         bytes memory callData;
 
+        //@note норм
         if (bytes(signature).length == 0) {
             callData = data;
         } else {
             callData = abi.encodePacked(bytes4(keccak256(bytes(signature))), data);
         }
 
+        //@audit vlad. Ха-ха-ха попался, а откуда в этом контракте ETH появится а?
+        // Сейчас оффлайн, поэтому не приведу примеры issues из репортов
+        // Это было в Moonwell на C4, JOJO на Sherlock и ещё пару раз
+        // Но это распространённая ошибка, забывают `payable receive()` добавить
         (bool success,) = target.call{value: value}(callData);
         if (!success) {
             revert Timelock__TransactionExecutionReverted();
@@ -136,6 +142,7 @@ contract Timelock is ITimelock, Ownable {
      *
      * @notice Cancel a single transaction
      */
+    //@note норм
     function cancelTransaction(
         uint256 proposalId,
         address target,
