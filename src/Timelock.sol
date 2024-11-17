@@ -105,6 +105,7 @@ contract Timelock is ITimelock, Ownable {
         }
 
         //@note можно запустить только в период [eta; GRACE_PERIOD]
+        // @comment maks. имеешь в виду [eta; eta + GRACE_PERIOD], и разве не ) в конце?
         if (block.timestamp < eta) {
             revert Timelock__DelayHasNotPassed();
         } else if (block.timestamp >= eta + GRACE_PERIOD) {
@@ -124,6 +125,10 @@ contract Timelock is ITimelock, Ownable {
         // Сейчас оффлайн, поэтому не приведу примеры issues из репортов
         // Это было в Moonwell на C4, JOJO на Sherlock и ещё пару раз
         // Но это распространённая ошибка, забывают `payable receive()` добавить
+
+        // @comment maks. тру. так же не уверен с этими receive() и fallback() функции
+        // технически, сейчас Timelock не может иметь эфир, потому что его сюда нельзя прислать?
+        // это можно было бы заэксплоитить?
         (bool success,) = target.call{value: value}(callData);
         if (!success) {
             revert Timelock__TransactionExecutionReverted();
