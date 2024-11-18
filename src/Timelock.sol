@@ -106,6 +106,7 @@ contract Timelock is ITimelock, Ownable {
 
         //@note можно запустить только в период [eta; GRACE_PERIOD]
         // @comment maks. имеешь в виду [eta; eta + GRACE_PERIOD], и разве не ) в конце?
+        //@answer vlad. Это я просто для себя упростил когда смотрел, не обращай внимания
         if (block.timestamp < eta) {
             revert Timelock__DelayHasNotPassed();
         } else if (block.timestamp >= eta + GRACE_PERIOD) {
@@ -129,6 +130,11 @@ contract Timelock is ITimelock, Ownable {
         // @comment maks. тру. так же не уверен с этими receive() и fallback() функции
         // технически, сейчас Timelock не может иметь эфир, потому что его сюда нельзя прислать?
         // это можно было бы заэксплоитить?
+
+        //@answer vlad. Эксплоита нету, просто Timelock не сможет использовать payable call, тк не может эфир иметь
+        // Интересный факт, ETH на таком контракте всётаки может быть. Знаю минимум 2 метода
+        // Подумай поищи, через 30 минут спрашивай, больше времени не трать
+        // И не делай это вместо учёбы, так когда время свободное будет
         (bool success,) = target.call{value: value}(callData);
         if (!success) {
             revert Timelock__TransactionExecutionReverted();

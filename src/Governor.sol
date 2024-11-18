@@ -316,6 +316,9 @@ contract Governor is EIP712 {
         // @comment maks. когда пишу код с подписями, моё натуральное желание это впихнуть в подпись как можно больше вещей.
         // тут я подумал об этом, но не смог сузить вот так границу как ты.
 
+        //@answer vlad. Блин они на Sherlock удалили мега интересную дискуссию по MakerDAO как раз насчёт коллизий
+        // Вот так из-за централизации мы потеряли попкорновый срач в интернете
+
         // any checks at all? can it cast a random persons vote in case of random signature spam? sounds like i am not really understading something, missing out
         // возможно ли в теории наспамить в эту функицю кучу подписей, с идеей что хоть одна попадется,
         // в который я угадаю параметры proposalId и support и при этом signer это участник DAO и он делегировал токены,
@@ -403,6 +406,9 @@ contract Governor is EIP712 {
         // но по итогу в mappinge queuedTransactions будет только одна. при execution пропоузала execute() вызовет executeTransaction() на эти две одинаковые,
         // и по идее Timelock ревертнет на линии 103, так как транзакция уже не в очереди, а txHash у второй такой транзакции такой же как у первой
         // по сути наебнется весь пропоузал?
+        
+        //@answer vlad. Ты правильно понял: наебнётся. Но наверное такого юзкейса нету, поэтому им норм
+        // Сложно представить в какой ситуации понадобится подобный пропоузал сделать
 
         // may be unnecessary check, because there is no way to manually queue a transaction in the timelock contract
         // as a check for collision, it's really unlikely since txHash includes proposalId and proposal.eta
@@ -460,6 +466,7 @@ contract Governor is EIP712 {
         Proposal storage proposal = proposals[proposalId];
         //@audit vlad. Precision loss не будет, ну или он слишком малый
         // @comment maks. мало у меня уверенности в solidity math
+        //@answer vlad. пройдёт время и такие штуки будешь с первого взгляда щёлкать
         uint256 quorumAmount = (i_token.getPastTotalSupply(proposal.startBlock - 1)) * quorumVotes() / 100; // precision loss?
 
         if (proposal.forVotes + proposal.againstVotes >= quorumAmount) {
@@ -512,6 +519,8 @@ contract Governor is EIP712 {
      */
     //@audit vlad. Не учитывает что токен имеет 18 decimals, считай proposalThreshold и нету
     // @comment maks. так же не уверен в использовании decimals
+    //@answer vlad. Эй Максим ну всмысле. 1 GovernanceToken у тебя в проекте - это 1e18
+    // Threshold у тебя - это 1000 токенов. Значит должно быть значение 1000e18
     function proposalThreshold() public pure returns (uint256) {
         return 1000;
     }
